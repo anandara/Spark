@@ -1,0 +1,103 @@
+import org.apache.spark.sql._
+import org.apache.commons.lang.StringEscapeUtils.escapeJava
+
+val opts = Map("url" -> "jdbc:netezza://dc01netzhstp02:5480/EXECDB_STG",
+        "user" -> " username",
+        "password" -> "password ",
+        "dbtable" -> "CC.PROVIDER",		 
+        "numPartitions" -> "4")
+		
+val opts = Map("url" -> "jdbc:netezza://dc01netzhstp02:5480/EXECDB_STG",
+        "user" -> "username",
+        "password" -> "password",
+        "dbtable" -> "(SELECT * FROM CC.PROVIDER where providername not like '%\')e ",		 
+        "numPartitions" -> "4")
+		
+val df = sqlContext.read.format("com.ibm.spark.netezza").options(opts).load()   .option("multiLine","true")
+
+
+.option("escape","^")
+("select trim(rtrim(ltrim(translate(translate(providername,'\\\n',''),'\t','')))) FROM provider").show
+
+"select trim(rtrim(ltrim(translate(translate(providername,'\\\n',''),'\t','')))) FROM provider
+
+val df2 = sqlContext.sql("SELECT trim(STATE) as state, trim(provid) AS provid, trim(rtrim(ltrim(translate(providername,'\n','')))) as providername, trim(rtrim(ltrim(translate(providerspecialty,'\n','')))) AS providerspecialty, trim(rtrim(ltrim(translate(providertype,'\n','')))) as providertype FROM provider")
+
+scala> val d3 = sqlContext.sql("select state, trim(provid) AS provid,trim(rtrim(ltrim(translate(providerspecialty,'\n','')))) AS providerspecialty, trim(rtrim(ltrim(translate(providertype,'\n','')))) as providertype FROM provider")
+d3: org.apache.spark.sql.DataFrame = [state: string, provid: string, providerspecialty: string, providertype: string]
+
+scala> d3.write.saveAsTable("eim_reporting_db.bh_prov")
+ 
+  val d2 = df.select(trim(regexp_replace($"PROVIDERNAME","char(13)","")).alias("PROVIDERNM"))
+  
+  val d2 = df.select(regexp_replace(regexp_replace($"PROVIDERNAME","char(13)","")),"char(10)","").alias("PROVIDERNM")
+  
+  
+  val d2 = df.selectExpr("regexp_replace('PROVIDERNAME','[\\n]',' ')").write.mode("overwrite").saveAsTable("eim_reporting_db.bh_p1")
+ 
+
+  application_1559426567551_26593
+  
+  sqlContext.sql("""CREATE TABLE eim_reporting_db.bh_clmtemp AS
+SELECT CLM.YEAR_MO AS YEAR_MO, CLM.PAT_ID AS PAT_ID,
+CLM.CL_TYPE AS CL_TYPE,
+CLM.REV_CODE AS REV_CODE, 
+CLM.HCG_MR_LINE AS HCG_MR_LINE,
+CLM.PROV_ATT AS PROV_ATT,	
+CLM.CPT_MOD_1 AS CPT_MOD_1,
+CLM.CPT_MOD_2 AS CPT_MOD_2, 
+CLM.PART_STATE AS PART_STATE,
+CASE WHEN CLM.CPT_MOD_1 ='AF'THEN 'PHYSICIAN/PSYCHIATRIS' 
+		 WHEN CLM.CPT_MOD_1 ='AH'THEN 'CLINICAL PSYCHOLOGIST' 
+		 WHEN CLM.CPT_MOD_1='AM' THEN 'PHYSICIAN TEAM MEMBER (PA)' 
+		 WHEN CLM.CPT_MOD_1='SA' THEN 'NURSE PRACTITIONER (APRN)' 
+		 WHEN CLM.CPT_MOD_1='HN' THEN 'BACHELOR’S LEVEL' 
+		 WHEN CLM.CPT_MOD_1='HO' THEN 'MASTER’S LEVEL' 
+		 WHEN CLM.CPT_MOD_1='TD' THEN 'REGISTERED NURSE (RN)' 
+		 WHEN CLM.CPT_MOD_1='TE' THEN 'LICENSED PRACTICAL NURSE (LPN)' ELSE 'OTHERS' END AS CPT_MOD_1_DESC ,
+	CASE WHEN CLM.CPT_MOD_2 ='AF' THEN 'PHYSICIAN/PSYCHIATRIS' 
+		 WHEN CLM.CPT_MOD_2 ='AH' THEN 'CLINICAL PSYCHOLOGIST' 
+		 WHEN CLM.CPT_MOD_2='AM' THEN 'PHYSICIAN TEAM MEMBER (PA)' 
+		 WHEN CLM.CPT_MOD_2='SA' THEN 'NURSE PRACTITIONER (APRN)' 
+		 WHEN CLM.CPT_MOD_2='HN' THEN 'BACHELOR’S LEVEL' 
+		 WHEN CLM.CPT_MOD_2='HO' THEN 'MASTER’S LEVEL' 
+		 WHEN CLM.CPT_MOD_2='TD' THEN 'REGISTERED NURSE (RN)' 
+		 WHEN CLM.CPT_MOD_2='TE' THEN 'LICENSED PRACTICAL NURSE (LPN)' ELSE 'OTHERS' END AS CPT_MOD_2_DESC ,
+	UPPER(CLM.PROD_GL) AS PRODUCTNAME ,
+	UPPER(CLM.LOB_GL) AS LOB , 
+	CASE WHEN (UPPER(SUBSTRING(CLM.HCG_MR_LINE,1,1))) ='I' THEN 'IP' 
+		 WHEN (UPPER(SUBSTRING(CLM.HCG_MR_LINE,1,1))) ='O' THEN 'OP' 
+		 WHEN (UPPER(SUBSTRING(CLM.HCG_MR_LINE,1,1))) ='P' THEN 'Prof' END AS SERVICETYPE, 
+TRANSLATE(CLM.ICD_DIAG_01,'.','') AS ICD_DIAG_01 ,
+TRANSLATE(CLM.ICD_DIAG_02,'.','') AS ICD_DIAG_02,
+TRANSLATE(CLM.ICD_DIAG_03,'.','') AS ICD_DIAG_03,		
+UPPER(CLM.PROC_CODE) as PROC_CODE ,		
+LTRIM(RTRIM(UPPER(CLM.HCG_MR_LINE))) AS HCG ,
+CONCAT((LTRIM(RTRIM(UPPER(CLM.HCG_MR_LINE)))),CLM.HCG_YEAR) AS HCG_JOINER,
+CLM.HCG_YEAR AS HCG_YEAR ,	
+CLM.AMT_PAID AS AMT_PAID,	
+CLM.MR_UNITS_DAYS_RAW AS MR_UNITS_DAYS_RAW,	
+CLM.MR_ADMITS_CASES_RAW AS MR_ADMITS_CASES_RAW ,
+CLM.MR_PROCS_RAW AS MR_PROCS_RAW ,	
+CLM.PAID_COMP_FACTOR AS PAID_COMP_FACTOR,
+CLM.EST_SUB_RX_SAVINGS AS EST_SUB_RX_SAVINGS, 
+CLM.TRANSACTION_FEE AS TRANSACTION_FEE, 
+CLM.RX_REBATE as RX_REBATE,
+CLM.ICDVERSION AS ICDVERSION,
+CLM.RX_NDC AS RX_NDC,
+CLM.NDC_SUB AS NDC_SUB,
+CLM.MEMBER_QUAL AS MEMBER_QUAL
+FROM semantic_db.medinsight_claim CLM
+INNER JOIN semantic_db.medinsight_membermonths MEM 
+				ON CLM.PAT_ID = MEM.PAT_ID 
+				AND CLM.MEMBER_QUAL = MEM.MEMBER_QUAL
+				AND CLM.YEAR_MO = MEM.YEAR_MO
+				AND CLM.PART_STATE = MEM.PART_STATE
+				AND CLM.YEAR_MO>='201601'
+				AND CLM.PART_STATE = 'CA'
+INNER JOIN eim_reporting_db.bh_unique_members_v1 UMEM   				
+ON UMEM.PAT_ID=MEM.PAT_ID 
+AND UMEM.PART_STATE= MEM.PART_STATE
+AND MEM.YEAR_MO >= '201601'
+AND UMEM.PART_STATE = 'CA'
+WHERE CLM.part_state='CA'  AND CLM.YEAR_MO>='201601'""")
