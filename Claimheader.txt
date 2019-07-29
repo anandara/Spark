@@ -1,0 +1,363 @@
+package com.molina.semantic.Claims_Encounters
+
+import java.io.PrintWriter
+import java.io.StringWriter
+import org.apache.spark.SparkConf
+import org.apache.spark.SparkContext
+import org.apache.spark.sql._
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.functions.current_timestamp
+import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.functions.concat_ws
+import org.apache.spark.sql.types.DoubleType
+import org.apache.spark.sql.functions.expr
+import org.apache.spark.sql.functions.max
+import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.functions.regexp_extract
+import org.apache.spark.sql.functions.trim
+import org.apache.spark.sql.functions.unix_timestamp
+import org.apache.spark.sql.functions.when
+import org.apache.spark.sql.types._
+import org.apache.spark.sql.Column
+import org.slf4j.LoggerFactory
+import java.io.StringWriter
+import java.io.PrintWriter
+import java.sql.Timestamp
+import java.text.SimpleDateFormat
+import java.util.Date
+
+object h3_new {
+  val logg = new StringBuilder();
+def main(args: Array[String]){
+   val logger = LoggerFactory.getLogger(this.getClass)
+   val conf = new SparkConf()
+   //var exitcodestatus = "pass"
+   val sc = new SparkContext(conf)
+   val sqlContext = new org.apache.spark.sql.hive.HiveContext(sc)
+   import sqlContext.implicits._
+   val datetoday = java.time.LocalDate.now
+   val datetimetoday = java.time.LocalDateTime.now
+   import java.sql.Timestamp
+   import java.text.SimpleDateFormat
+   import java.util.Date
+   val current_date = java.time.LocalDate.now.toString
+   val starttime =  new Timestamp(System.currentTimeMillis());
+   
+   val loadtype = args(0)
+   var parts = 0
+   var parts1 = 0
+   var transform5 = ""
+   var transform7 = ""
+   var transform8 = ""
+   var transform9 = ""
+   var transform10 = ""
+   var transform11 = ""
+   var process_type = ""
+   var claim_header_input_table = ""
+   var claim_header_output_table = ""
+   var claim_header_base_table = ""
+   var path = ""
+   var log_path = ""
+   var stg_database = ""
+   var final_database = ""
+   val snapshot_name = "Stage_H3_"
+
+  if(loadtype=="I"){
+    process_type = "daily"
+    logger.info("Running "+process_type+" for claim header- H3")
+    transform5 = "final_status_claims_"+process_type
+    transform7 = "claim_header_joins_"+process_type
+    transform8 = "claim_header_lookup_"+process_type
+    transform9 = "product_lob_"+process_type
+    transform10 = "claim_enroll_"+process_type
+    transform11 = "prodlob_region_submitter_error_"+process_type
+    stg_database = "semantic_db_stg" 
+    final_database = "semantic_db_stg" 
+    parts = 400
+    path = "/edl/transform/semantic/data/claims/daily/file/header_"+process_type 
+    log_path = "/edl/uc/claims/logs/"+ snapshot_name + process_type + "_" + datetoday.toString() + ".txt"
+  }
+  else if (loadtype=="F"){
+    process_type = "fullload"
+    logger.info("Running "+process_type+" for claim header- H3")
+    transform5 = "final_status_claims_"+process_type
+    transform7 = "claim_header_joins_"+process_type
+    transform8 = "claim_header_lookup_"+process_type
+    transform9 = "product_lob_"+process_type
+    transform10 = "claim_enroll_"+process_type
+    transform11 = "prodlob_region_submitter_error_"+process_type
+    stg_database = "semantic_db_stg" 
+    final_database = "semantic_db_stg" 
+    parts = 2001
+    path = "/edl/transform/semantic/data/claims/fullload/file/header_"+process_type 
+    log_path = "/edl/uc/claims/logs/"+ snapshot_name + process_type + "_" + datetoday.toString() + ".txt"
+  }
+  else 
+  logger.error("load type not specified correctly")
+
+   
+   
+   try{
+     logger.info("claim_header_h3_generic transformation is started")
+
+sqlContext.sql("""insert into edl_ops.computation_metrics select 'claims_overview','CLAIM_HEADER','"""+ process_type +"""','9','claim_header_lookup','STARTED',current_timestamp() """)
+//start*/
+//
+//val enroll_keys_Df = sqlContext.sql("Select ratecode,carriermemid,planid,enrollid,effdate,termdate,segtype,state from qnxt_db.enrollkeys_txn where segtype = 'INT'")
+//enroll_keys_Df.cache()
+//enroll_keys_Df.registerTempTable("enroll_keys1")
+//val enroll_keys_Df1 = sqlContext.sql("""select * from (select *, row_number() over (partition by enrollid,state order by lastupdate desc) rnk from enroll_keys1) a where rnk=1""").drop("rnk")
+//enroll_keys_Df1.registerTempTable("enroll_keys")
+sqlContext.setConf("spark.sql.autoBroadcastJoinThreshold", "157286400")
+
+/* ADDED rateid for enrollkeys*/
+val enroll_keys_Df = sqlContext.sql("select * from "+ stg_database+".enrollkeys_snapshot")
+enroll_keys_Df.cache()
+enroll_keys_Df.registerTempTable("enroll_keys")
+
+//Header columns to leftjoin withColumn enrollkeys
+val header_df = sqlContext.sql("select claimid, enrollid, state, source_system, startdate from "+stg_database +"." + transform7 ).coalesce(2001)
+
+val header_ek_join_df = header_df.as("header").join(enroll_keys_Df.as("enroll_keys"), enroll_keys_Df("enrollid")===header_df("enrollid") && enroll_keys_Df("state")===header_df("state"), "left").select(col("header.*"), col("enroll_keys.carriermemid"), col("enroll_keys.planid").as("ek_planid"), col("enroll_keys.effdate"), col("enroll_keys.termdate"), col("enroll_keys.ratecode").as("ek_rate_code"), col("enroll_keys.CoverageCode"))
+
+val enroll_coverage_Df1 = sqlContext.sql("Select effdate,termdate,ratecode,enrollcoverageid,enrollid,state,lastupdate from qnxt_db.enrollcoverage_txn")
+enroll_coverage_Df1.cache()
+//val enroll_coverage_Df1 = sqlContext.sql("Select effdate,termdate,ratecode,enrollcoverageid,enrollid,state,lastupdate from qnxt_db.enrollcoverage")
+enroll_coverage_Df1.registerTempTable("enroll_coverage_tmp1")
+
+//Get the latest enrollcoverageid
+val enroll_coverage_Df2 = sqlContext.sql("""select * from (select *, row_number() over (partition by enrollcoverageid,state order by lastupdate desc) rnk from enroll_coverage_tmp1) a where rnk=1""").drop("rnk")
+enroll_coverage_Df2.registerTempTable("enroll_coverage_tmp2")
+
+//val header_df = sqlContext.sql("select claimid, enrollid, state, source_system, startdate from semantic_db_certification.claim_header_joins_fullload")
+
+//Join with header on enrollid where claim_start_date is in between effdate and termdate
+val header_ek_ec_join_df1 = header_ek_join_df.as("header").join(enroll_coverage_Df2.as("enroll_coverage"), enroll_coverage_Df2("enrollid")===header_ek_join_df("enrollid") && enroll_coverage_Df2("state")===header_ek_join_df("state") && header_ek_join_df("startdate").between(enroll_coverage_Df2("effdate"), enroll_coverage_Df2("termdate")), "left").select(col("header.*"), col("enroll_coverage.enrollid").as("ec_enrollid"), col("enroll_coverage.ratecode").as("ec1_ratecode"))
+
+//header_ek_ec_join_df1.registerTempTable("ec_startdate_test")
+//header_ek_ec_join_df1.cache()
+//val header_filter_df = header_ek_ec_join_df1.filter(col("startdate").between(col("effdate"),col("termdate")))
+
+val ec_maxenroll_df = sqlContext.sql("""select * from (select *, row_number() over (partition by enrollid,state order by lastupdate desc) rnk from enroll_coverage_tmp2) a where rnk=1""").drop("rnk")
+
+//Join with header on max latest enrollid
+val header_ek_ec_join_df2 = header_ek_ec_join_df1.as("enroll_coverage").join(ec_maxenroll_df.as("maxenroll"), header_ek_ec_join_df1("enrollid")===ec_maxenroll_df("enrollid") && header_ek_ec_join_df1("state")===ec_maxenroll_df("state"), "left").select(col("enroll_coverage.*"), col("maxenroll.ratecode").as("ec2_ratecode")).withColumn("ec_rate_code", coalesce(col("ec1_ratecode"), col("ec2_ratecode"))).drop("ec1_ratecode").drop("ec2_ratecode")
+header_ek_ec_join_df2.registerTempTable("header_ecc")
+
+val header_claimRN = sqlContext.sql("select * from (select *, row_number() over (partition by claimid, state order by claimid) rnk from header_ecc) as a where a.rnk = 1").drop("rnk")
+
+header_claimRN.repartition(parts).write.mode("overwrite").saveAsTable(stg_database+"." + transform10)
+val DF5= sqlContext.sql(" select * from "+stg_database+"." + transform10)
+
+DF5.registerTempTable("enroll_keys_coverage")
+
+val member_Df = sqlContext.sql("Select * from "+stg_database+".member_snapshot")
+member_Df.cache()
+member_Df.registerTempTable("member")
+
+val paycheck_deduplicated_Df = sqlContext.sql("Select check_number, check_amount,check_create_date,paydiscount,claimid,err_state_id from "+stg_database+".paycheck_deduplicated").withColumnRenamed("err_state_id", "state")
+paycheck_deduplicated_Df.registerTempTable("paycheck_deduplicated")
+//val claim_source_Df = sqlContext.sql("Select state,claimsourceid,description from qnxt_db.claimsource_txn")
+
+val claim_source_Df = sqlContext.sql("select * from (select state,claimsourceid,description, row_number() over (partition by claimsourceid,part_state order by lastupdate desc) rnk from qnxt_db.claimsource_txn where claimsourceid is not null) a where rnk=1").drop("rnk").distinct
+broadcast(claim_source_Df)
+claim_source_Df.registerTempTable("claim_source")
+val final_status_Df = sqlContext.sql("Select state,claimid,is_final from "+stg_database+"." + transform5 )
+//val final_status_Df = sqlContext.sql("Select state,claimid,is_final from semantic_db_certification.final_status_claims_fullload ")
+final_status_Df.registerTempTable("final_status")
+
+val claim_header_lookup_Df2 = sqlContext.sql("Select * from "+stg_database+"." + transform7 ) /*changed from claim_header_lookup_sp2 to claim_header_lookup_joins*/
+//val claim_header_lookup_Df2 = sqlContext.sql("Select * from semantic_db_certification.claim_header_joins_fullload ")
+claim_header_lookup_Df2.registerTempTable("claim_header_lookup1")
+
+val claim_pay = sqlContext.sql("""select * from (select claimid, actualinterestdays, manualinterestdays, claimpaydiscountamount, state, lastupdate, row_number() over (partition by claimid,state order by lastupdate desc) rnk from qnxt_db.claimpay_txn) a where rnk=1""").drop("rnk")
+claim_pay.cache()
+claim_pay.registerTempTable("claimpay")
+
+val entity_Df = sqlContext.sql("Select e.entid,e.enttype,e.addr1,e.addr2,e.city,e.zip,e.county,e.phone,e.state as member_state,e.latitude,e.longitude,e.mobilephone,e.ent_part_state from "+stg_database+".entity e ")
+//val entity_Df = sqlContext.sql("Select e.entid,e.enttype,e.addr1,e.addr2,e.city,e.zip,e.county,e.phone,e.state as member_state,e.latitude,e.longitude,e.mobilephone,e.part_state as ent_part_state from pdi_db.entity_snapshot e ")
+entity_Df.cache()
+  entity_Df.registerTempTable("entity")
+
+var result_Df = sqlContext.sql("""select ch.*,ekc.ek_planid,ekc.ek_rate_code,ekc.carriermemid as carrier_mem_id,ekc.effdate as ek_eff_date,ekc.termdate as ek_term_date, ekc.ec_enrollid, ekc.ec_rate_code, ekc.CoverageCode, cp.actualinterestdays, cp.manualinterestdays, cp.claimpaydiscountamount,e.addr1 as member_address1,e.addr2 as member_address2,e.city as member_city,e.member_state,e.zip as member_zip,e.county as member_county,e.phone as member_phone,e.mobilephone as member_mobile,e.latitude,e.longitude,mm.fullname as member_name,mm.dob as mbr_dob,mm.sex as mbr_gender,mm.headofhouse,mm.ethnicid
+from claim_header_lookup1 ch 
+left join enroll_keys_coverage ekc on ((ch.claimid = ekc.claimid) and  (ch.state = ekc.state) and (ch.source_system=ekc.source_system)) 
+LEFT JOIN claimpay cp on ((ch.claimid = cp.claimid) and (cp.state = ch.state))
+left join member mm on ((mm.memid = ch.memid) and (mm.state = ch.state))
+left join entity e on ((mm.entityid = e.entid) and (mm.state = e.ent_part_state))""").distinct
+
+result_Df.registerTempTable("claim_lookup")
+
+val insured_df = sqlContext.sql("select * from "+stg_database+".insured_table")
+insured_df.registerTempTable("insured_table")
+
+var result_Df_1 = sqlContext.sql(""" select ch.*, pd.check_number, pd.check_amount,pd.check_create_date,pd.paydiscount,cs.description as claim_source, fs.is_final, ins.insured_fullname, ins.insuredid as insured_id from claim_lookup ch
+left join paycheck_deduplicated pd on ((pd.state = ch.state) and (pd.claimid = ch.claimid))
+left join claim_source cs on ((cs.claimsourceid = ch.claimsourceid) and (cs.state = ch.state)) 
+left join final_status fs on ((fs.claimid = ch.claimid) and (fs.state = ch.state)) 
+left join insured_table ins on ch.enrollid = ins.enrollid and ch.state = ins.state """).distinct
+
+//Yet to decide on where to add this
+//result_Df = result_Df.withColumn("is_active", when(col("ec_enrollid").isNotNull, lit("Y")).otherwise(lit("N")))
+
+/* ADDED CLAIMID_LOB column*/
+val res1 = result_Df_1.withColumn("base_claim_id", regexp_extract(col("claimid"), "([0-9]*)[A-Z]*", 1)).withColumn("c_planid", when(col("planid").isNull || col("planid")==="", col("ek_planid")).otherwise(col("planid"))).withColumn("CLAIMID_LENGTH", length(col("claimid"))).withColumn("CLAIMID_LOB", when(expr("substring(claimid, CLAIMID_LENGTH, CLAIMID_LENGTH)")==="S", "S").when(expr("substring(claimid, CLAIMID_LENGTH, CLAIMID_LENGTH)")==="M", "M").otherwise("NA")).withColumnRenamed("submitterid","claims_submitterid")
+
+//sqlContext.setConf("spark.default.parallelism", "3001")
+
+//("/edl/transform/semantic/data/test/claimheader/claim_header_fullload")
+res1.repartition(2001).write.mode("overwrite").parquet(path)
+
+//-----------------------------------------EIM-40295---------------------------------------------------------//
+val res2_initial = sqlContext.read.parquet(path)
+res2_initial.registerTempTable("claim_header_lookup2_initial")
+
+val facility_df = sqlContext.table("qnxt_db.facility_txn").selectExpr("facilitycode","CASE WHEN TRIM(UPPER(DESCRIPTION))='NO FACILITY' OR DESCRIPTION IS NULL THEN 'Not Applicable' ELSE DESCRIPTION END as facility_description","part_state")
+facility_df.registerTempTable("facility_df_temp")
+
+val res2 = sqlContext.sql("""select ht.*,ft.facility_description
+from claim_header_lookup2_initial ht
+left join facility_df_temp ft on (ht.state=ft.part_state and ht.facilitycode=ft.facilitycode)""")
+
+res2.registerTempTable("claim_header_lookup2")
+//-----------------------------------------------------------------------------------------------------------//
+//res1.registerTempTable("claim_header_lookup2")
+
+//LOB-PRODUCT_UNV_SPLIT
+val input_table = sqlContext.sql("""select claimid, state, planid, c_planid, ek_rate_code ,ec_rate_code, source_system, claims_submitterid, CASE WHEN ec_rate_code is not null or trim(ec_rate_code) != '' THEN ec_rate_code ELSE ek_rate_code END AS ratecode from claim_header_lookup2""").coalesce(1001)
+input_table.registerTempTable("header_lookup")
+
+/* PRIMARYLOB is also selected from the mm-product table*/
+val DF2 = sqlContext.sql("select planid, state as p_state, ratecodepart, primary_lob as primarylob, lobname, productname from semantic_db_stg.mm_product").withColumn("tmp_state", when(col("p_state").isin("NY","MS","ID"),lit("NY")).otherwise(col("p_state"))).withColumn("tmp_state1", when(col("lobname")==="Medicare" && !(col("productname")==="MMP Medicaid" || col("productname")==="MMP Medicare" || col("productname")==="FIDE-SNP Medicare" || col("productname")==="FIDE-SNP Medicare"),lit("MC")).otherwise(col("tmp_state")))
+
+DF2.registerTempTable("product")
+
+val DF3 = sqlContext.sql("select chl.claimid, chl.state, chl.planid, chl.c_planid, chl.ratecode,chl.source_system, chl.claims_submitterid, mmp.p_state, mmp.tmp_state1, mmp.lobname, mmp.productname, mmp.primarylob from header_lookup chl left join product mmp  ON chl.state = mmp.tmp_state1 and ((chl.c_planid=TRIM(mmp.planid) AND mmp.ratecodepart='NA') OR (chl.c_planid=TRIM(mmp.planid) AND mmp.ratecodepart='MAPD') OR (chl.c_planid=TRIM(mmp.planid) AND TRIM(chl.ratecode) LIKE TRIM(mmp.ratecodepart))) ")
+
+val join_DF1=DF3.withColumn("is_medicare", when(col("tmp_state1") === "MC","YES").when(col("tmp_state1").isNull, lit("UNDEFINED")).otherwise("NO")).withColumn("lobname", when(col("lobname").isNull, lit("UNDEFINED")).otherwise(col("lobname"))).withColumn("productname", when(col("productname").isNull, lit("UNDEFINED")).otherwise(col("productname"))).withColumn("tmp_state1", when(col("tmp_state1").isNull && col("state")==="NY",lit("UN")).when(col("tmp_state1").isNull && !(col("state")==="NY"), col("state")).otherwise(col("tmp_state1"))).withColumn("unv_state", when(col("tmp_state1").isin("NY", "MC") && col("p_state").isNotNull ,col("p_state")).otherwise(col("tmp_state1"))).withColumn("tmp_state1", when(col("tmp_state1")==="UN", lit("NY")).otherwise(col("tmp_state1")))
+
+join_DF1.repartition(parts).write.mode("overwrite").saveAsTable(stg_database+"." + transform9)
+//join_DF1.repartition(1001).write.mode("overwrite").saveAsTable("semantic_db_certification.product_lob_fullload")
+
+val prodlob_table_df = sqlContext.sql("select * from "+stg_database+"." + transform9)
+
+prodlob_table_df.registerTempTable("header_product")
+
+/* REGIONNAME, SUBMITTERID, ERRORCODE, ERRORFIELD are extracted here*/
+val region_df = sqlContext.sql("select * from execdb_db.region")
+region_df.registerTempTable("region")
+
+val header_prod_region_df = sqlContext.sql("select M.*, R.RegionName FROM header_product M LEFT JOIN region R ON M.state = R.STATE AND ((M.PlanID = R.PlanID AND R.RatecodePart = 'NA') OR (M.PlanID = R.PlanID AND LTRIM(RTRIM(M.RATECODE)) LIKE LTRIM(RTRIM(R.RateCodePart))))")
+
+val header_submitterid_nulls_df = header_prod_region_df.filter(col("claims_submitterid").isNull).withColumn("SUBMITTERID",  lit(null: String))
+val header_submitterid_nonnulls_df = header_prod_region_df.filter(!(col("claims_submitterid").isNull))
+
+val tradingpartner_df = sqlContext.sql("select * from ms_report_db.TRADINGPARTNER")
+
+val claim_join = header_submitterid_nonnulls_df.as("claims").join(tradingpartner_df.as("tp"), tradingpartner_df("TPEXCHANGEID")===header_submitterid_nonnulls_df("claims_submitterid") and tradingpartner_df("stateid")===header_submitterid_nonnulls_df("state"), "left").select(col("claims.*"), col("tp.SENDERTPORGNAME")).withColumn("SUBMITTERID", concat_ws("-", when(col("claims_submitterid").isNull, lit(0)).otherwise(col("claims_submitterid")), when(col("SENDERTPORGNAME").isNull || col("SENDERTPORGNAME")==="", "Not Applicable").otherwise(col("SENDERTPORGNAME")))).drop(col("SENDERTPORGNAME"))
+
+val final_submitter_df = claim_join.unionAll(header_submitterid_nulls_df.select(claim_join.columns.map(col):_*))
+final_submitter_df.registerTempTable("region_submitter")
+
+//-----------------------------------------EIM-40295---------------------------------------------------------//
+val clmob_df = sqlContext.sql("SELECT * FROM(SELECT DISTINCT CLAIMID,,concat_ws('-',CASE WHEN ERRORCODE='' or ERRORCODE is null THEN 'NA' ERRORCODE END,CASE WHEN DESCRIPTION='' or DESCRIPTION is null THEN 'Not Applicable' ELSE DESCRIPTION END) AS ERRORCODE,CASE WHEN ERRORFIELD='' or ERRORFIELD is null THEN 'NA' ELSE ERRORFIELD END AS ERRORFIELD,DESCRIPTION, stateid, ROW_NUMBER() OVER (PARTITION BY CLAIMID, stateid ORDER BY ROWID DESC) AS RNK FROM ERR_DB_STG.TBLM_CLMOB_STATEERR) AS A WHERE A.RNK=1").drop(col("RNK"))
+clmob_df.registerTempTable("claim_error")
+//----------------------------------------------------------------------------------------------------------//
+
+val header_prod_region_clmob_df = sqlContext.sql("select M.*, E.ERRORCODE, E.ERRORFIELD FROM region_submitter M LEFT JOIN claim_error E ON M.State = E.STATEID AND M.claimid = E.claimid")
+
+header_prod_region_clmob_df.repartition(parts).write.mode("overwrite").saveAsTable(stg_database+"." + transform11)
+
+val DF4= sqlContext.sql(" select * from "+stg_database+"." + transform11)
+
+//val prod_DF = sqlContext.sql("select distinct planid, lobname,state as p_state from semantic_db_certification.mm_product").withColumn("tmp_state", when(col("p_state").isin("NY","MS","ID"),lit("NY")).otherwise(col("p_state"))).withColumn("tmp_state1", when(col("lobname")==="Medicare" && (!col("productname")==="MMP Medicaid" || !col("productname")==="MMP Medicare"),lit("MC")).otherwise(col("tmp_state")))
+
+//.withColumn("tmp_state1",when(col("lobname")==="Medicare",lit("MC")).otherwise(col("p_state")) )
+
+//val join_DF = DF4.as("chl").join(prod_DF.as("prod"), DF4("planid")===prod_DF("planid") && DF4("state")===prod_DF("tmp_state1"),"left").select(col("chl.*"), col("prod.p_state"), col("prod.tmp_state1"))
+
+//val join_DF1=join_DF.withColumn("unv_state", when(col("tmp_state1")==="NY" || col("tmp_state1") === "MC" ,col("p_state")).otherwise(col("state"))).withColumn("is_medicare", when(col("tmp_state1") === "MC","YES").otherwise("NO"))
+
+val final_join = res2.as("c").join(DF4.as("prjoin_DF"), res2("state")===DF4("tmp_state1") && res2("claimid")===DF4("claimid") && res2("source_system")===DF4("source_system"), "inner").select(col("c.*"),col("prjoin_DF.unv_state"),col("prjoin_DF.is_medicare"), col("prjoin_DF.lobname"), col("prjoin_DF.productname").as("product_name"), col("prjoin_DF.primarylob"), col("prjoin_DF.RegionName"), col("prjoin_DF.SUBMITTERID"), col("prjoin_DF.ERRORCODE"), col("prjoin_DF.ERRORFIELD"))
+
+//.withColumn("lobname", when(col("lobname").isNull,lit("undefined")).otherwise(col("lobname"))).withColumn("productname", when(col("productname").isNull,lit("undefined")).otherwise(col("productname")))
+
+//val final_join = res1.as("c").join(join_DF1.as("prjoin_DF"), res1("state")===join_DF1("tmp_state1") && res1("claimid")===join_DF1("claimid") && res1("source_system")===join_DF1("source_system"), "left").select(col("c.*"),col("prjoin_DF.unv_state"),col("prjoin_DF.is_medicare"), col("prjoin_DF.lobname"), col("prjoin_DF.productname").as("product_name"))
+
+//val output_df = res1.withColumn(" mem_rate_code", when(col("ec_rate_code")isNull, col("ek_rate_code")).otherwise(col("ec_rate_code")))*/
+import org.apache.spark.sql.types.DoubleType
+val finalDf = final_join.drop(col("createdate")).withColumnRenamed("ek_eff_date", "enroll_eff_date").withColumnRenamed("ek_term_date", "enroll_term_date").withColumnRenamed("status", "claim_status").withColumnRenamed("carrier_mem_id", "mbr_medicaidid").withColumnRenamed("isepsdt", "epsdt").withColumnRenamed("startdate", "claim_start_date").withColumnRenamed("enddate", "claim_end_date").withColumnRenamed("controlnmb", "patient_control_num").withColumnRenamed("admitdate", "admit_date").withColumnRenamed("patientstatus", "patient_discharge_status").withColumnRenamed("paiddate", "claim_paid_date").withColumnRenamed("cleandate", "claim_clean_date").withColumnRenamed("totalamt", "claim_total_amount").withColumnRenamed("totalpaid", "claim_total_paid").withColumnRenamed("rendering_provider_full_name", "rendering_provider_name").withColumnRenamed("pay_to_provider_full_name", "pay_to_provider_name").withColumnRenamed("check_create_date", "check_create_date").withColumnRenamed("okpaydate", "claim_processed_date").withColumnRenamed("provid_claim", "rendering_provid").withColumn("orgclaimid_claim_amountpaid", lit("0.00000").cast(DoubleType)).withColumnRenamed("state", "source_state").withColumnRenamed("rendering_provid", "claim_provid")
+
+//val finalDf1 = finalDf.withColumn("admit_date", unix_timestamp(col("admit_date"), "yyyymmdd hh:mm:ss").cast("timestamp")).withColumn("claim_processed_date", unix_timestamp(col("claim_processed_date"), "yyyymmdd hh:mm:ss").cast("timestamp")).withColumn("claim_paid_date", unix_timestamp(col("claim_paid_date"), "yyyymmdd hh:mm:ss").cast("timestamp")).withColumn("admit_date", unix_timestamp(col("admit_date"), "yyyymmdd hh:mm:ss").cast("timestamp")).withColumn("claim_total_amount", col("claim_total_amount").cast(DoubleType)).withColumn("claim_total_paid", col("claim_total_paid").cast(DoubleType)).withColumn("eligibleamt", col("eligibleamt").cast(DoubleType)).withColumn("eobeligibleamt", col("eobeligibleamt").cast(DoubleType)).withColumn("totalmemamt", col("totalmemamt").cast(DoubleType)).withColumn("totaladdlmemamt", col("totaladdlmemamt").cast(DoubleType))
+val finalDf1 = finalDf.withColumn("admit_date", unix_timestamp(col("admit_date"), "yyyymmdd hh:mm:ss").cast("timestamp")).withColumn("claim_processed_date", unix_timestamp(col("claim_processed_date"), "yyyymmdd hh:mm:ss").cast("timestamp")).withColumn("claim_paid_date", unix_timestamp(col("claim_paid_date"), "yyyymmdd hh:mm:ss").cast("timestamp")).withColumn("admit_date", unix_timestamp(col("admit_date"), "yyyymmdd hh:mm:ss").cast("timestamp")).withColumn("claim_total_amount", col("claim_total_amount").cast(DoubleType)).withColumn("claim_total_paid", col("claim_total_paid").cast(DoubleType)).withColumn("eligibleamt", col("eligibleamt").cast(DoubleType)).withColumn("eobeligibleamt", col("eobeligibleamt").cast(DoubleType)).withColumn("totalmemamt", col("totalmemamt").cast(DoubleType)).withColumn("totaladdlmemamt", col("totaladdlmemamt").cast(DoubleType)).withColumnRenamed("rend_provid", "rendering_provid").withColumnRenamed("pr_speciality_code", "rendering_specialty_code").withColumnRenamed("rend_specialty_desc", "rendering_specialty_desc").withColumnRenamed("pd_speciality_code", "PayTo_specialty_code").withColumnRenamed("pay_to_specialty_desc", "PayTo_specialty_desc")
+
+val finalDf2=finalDf1.withColumn("service_year_month", substring(regexp_replace(col("claim_start_date"), "-", ""), 1, 6)).withColumn("paid_year_month", substring(regexp_replace(col("claim_paid_date"), "-", ""), 1, 6)).withColumn("part_state",finalDf1.col("unv_state")).withColumn("part_year",year(finalDf1("claim_start_date")).cast("String")).withColumnRenamed("unv_state", "state").drop("c_planid").drop("state")
+
+finalDf2.registerTempTable("claim_header_lookup_final")
+
+sqlContext.clearCache()
+sqlContext.setConf("hive.exec.dynamic.partition.mode","nonstrict")
+sqlContext.setConf("spark.sql.tungsten.enabled","true")
+//sqlContext.sql("""insert overwrite table semantic_db_certification.claim_header_lookup partition(part_state, part_year) select * from claim_header_lookup_final""")
+//sqlContext.setConf("spark.sql.shuffle.partitions","3001")
+//finalDf2.write.mode("overwrite").saveAsTable("semantic_db_certification.claim_header_lookup_fl")
+
+//sqlContext.setConf("hive.exec.dynamic.partition.mode","nonstrict")
+
+//sqlContext.setConf("spark.sql.shuffle.partitions","1800")
+
+if(loadtype=="I"){
+  /* existing
+  finalDf2.repartition(parts).write.mode("overwrite").saveAsTable("semantic_db_certification." + transform8)   
+  val input_table_incremental = sqlContext.sql("select * from semantic_db_certification." + claim_header_input_table)
+    input_table_incremental.registerTempTable("uniontable1")
+    val input_table_fullload = sqlContext.sql("select * from semantic_db_certification." + claim_header_base_table)
+    input_table_fullload.registerTempTable("uniontable2")
+    val union_df = sqlContext.sql("select * from uniontable1 union all select * from uniontable2")
+    union_df.registerTempTable("uniontable")
+    val rank_df = sqlContext.sql("""select * from (select *,row_number() over (partition by claimid,part_state order by ch_lastupdate desc) rnk from uniontable) a where rnk=1""").drop("rnk").distinct
+    rank_df.registerTempTable("uniontable3")
+    sqlContext.setConf("hive.exec.dynamic.partition.mode","nonstrict")
+    sqlContext.setConf("spark.sql.shuffle.partitions","2001")
+    sqlContext.sql("""insert overwrite table semantic_db_certification."""+ claim_header_output_table +""" partition(part_state, part_year) select * from uniontable3""")
+   */
+  //latest change as on 02/18
+  /*finalDf2.repartition(parts).write.mode("overwrite").saveAsTable(stg_database+"." + transform8)
+  val input_table_incremental = sqlContext.sql("select * from "+stg_database+"." + claim_header_input_table)*/
+  finalDf2.registerTempTable("uniontable1")  
+  sqlContext.sql("insert overwrite table "+final_database+"."+ transform8 +" partition(part_state, part_year) select * from uniontable1")
+   
+  } 
+  else if (loadtype=="F"){
+    //sqlContext.setConf("hive.exec.dynamic.partition.mode","nonstrict")
+
+  sqlContext.setConf("spark.sql.shuffle.partitions","2001")
+  sqlContext.sql("insert overwrite table "+final_database+"."+ transform8 +" partition(part_state,part_year) select * from claim_header_lookup_final")
+  //sqlContext.sql("""insert overwrite table semantic_db_certification.claim_header_lookup partition(part_state, part_year) select * from claim_header_lookup_final""")
+  }
+  else 
+  logger.info("claim_header_h3_generic transformation completed")
+
+sqlContext.sql("""insert into edl_ops.computation_metrics select 'claims_overview','CLAIM_HEADER','"""+ process_type +"""','9','claim_header_lookup','FINISHED',current_timestamp() """)    
+   } catch {
+        case e: Exception =>
+        {
+          var sw = new StringWriter
+          e.printStackTrace
+
+          e.printStackTrace(new PrintWriter(sw))
+          val emailBody = "Please refer to log at " + log_path + '\n' + snapshot_name + process_type +" Job failed with the following exception: " + '\n' + sw.toString.replace(" at ", '\n' + " at ")
+          logg.append(java.time.LocalDateTime.now + ": "+snapshot_name + process_type +" Job failed with the following exception: " + '\n' + sw.toString.replace(" at ", '\n' + " at ") + '\n')
+          com.molina.utils.EmailUtils.sendEmail("Data_Strtgy_EIM_MHI@MolinaHealthCare.Com,Rajasekhar.Chevvuri@molinahealthcare.com,Ramya.Kolla@molinahealthcare.com", "Sri.Pemmasani@MolinaHealthCare.Com", "Pipeline Failure Notification - Claims & Encounters", emailBody)
+          
+           throwsException()
+        }
+    }
+   finally {
+      com.molina.utils.WriteLogs.logging_toHDFS(log_path, logg.toString, sc)
+    }
+     def throwsException() {
+    throw new IllegalStateException("Exception thrown");
+  }
+}
+}
